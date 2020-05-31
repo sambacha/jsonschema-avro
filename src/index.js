@@ -67,22 +67,23 @@ jsonSchemaAvro._isRequired = (list, item) => list.includes(item)
 
 jsonSchemaAvro._convertProperties = (schema = {}, required = [], path = []) => {
 	return Object.keys(schema).map((item) => {
+		const isRequired = jsonSchemaAvro._isRequired(required, item)
 		if(jsonSchemaAvro._isComplex(schema[item])){
-			return jsonSchemaAvro._convertComplexProperty(item, schema[item], path)
+			return jsonSchemaAvro._convertComplexProperty(item, schema[item], path, isRequired)
 		}
 		else if(jsonSchemaAvro._isArray(schema[item])){
-			return jsonSchemaAvro._convertArrayProperty(item, schema[item], path)
+			return jsonSchemaAvro._convertArrayProperty(item, schema[item], path, isRequired)
 		}
 		else if(jsonSchemaAvro._hasEnum(schema[item])){
-			return jsonSchemaAvro._convertEnumProperty(item, schema[item], path)
+			return jsonSchemaAvro._convertEnumProperty(item, schema[item], path, isRequired)
 		}
-		return jsonSchemaAvro._convertProperty(item, schema[item], jsonSchemaAvro._isRequired(required, item))
+		return jsonSchemaAvro._convertProperty(item, schema[item], isRequired)
 	})
 }
 
-jsonSchemaAvro._convertComplexProperty = (name, contents, parentPath = []) => {
+jsonSchemaAvro._convertComplexProperty = (name, contents, parentPath = [], isRequired = false) => {
 	const path = parentPath.slice().concat(name)
-	return {
+	const prop = {
 		name,
 		doc: contents.description || '',
 		type: {
@@ -91,11 +92,12 @@ jsonSchemaAvro._convertComplexProperty = (name, contents, parentPath = []) => {
 			fields: jsonSchemaAvro._convertProperties(contents.properties, contents.required, path)
 		}
 	}
+	return jsonSchemaAvro._setTypeAndDefault(prop, contents, isRequired)
 }
 
-jsonSchemaAvro._convertArrayProperty = (name, contents, parentPath = []) => {
+jsonSchemaAvro._convertArrayProperty = (name, contents, parentPath = [], isRequired = false) => {
 	const path = parentPath.slice().concat(name)
-	return {
+	const prop = {
 		name,
 		doc: contents.description || '',
 		type: {
@@ -109,9 +111,10 @@ jsonSchemaAvro._convertArrayProperty = (name, contents, parentPath = []) => {
 				: jsonSchemaAvro._convertProperty(name, contents.items)
 		}
 	}
+	return jsonSchemaAvro._setTypeAndDefault(prop, contents, isRequired)
 }
 
-jsonSchemaAvro._convertEnumProperty = (name, contents, parentPath = []) => {
+jsonSchemaAvro._convertEnumProperty = (name, contents, parentPath = [], isRequired = false) => {
 	const path = parentPath.slice().concat(name)
 	const prop = {
 		name,
@@ -124,36 +127,56 @@ jsonSchemaAvro._convertEnumProperty = (name, contents, parentPath = []) => {
 			}
 			: 'string'
 	}
-	if(contents.hasOwnProperty('default')){
-		prop.default = contents.default
-	}
-	return prop
+	return jsonSchemaAvro._setTypeAndDefault(prop, contents, isRequired)
 }
 
 jsonSchemaAvro._convertProperty = (name, value, isRequired = false) => {
 	const prop = {
 		name,
-		doc: value.description || ''
+		doc: value.description || '',
+		type: value.type
 	}
-	let types = []
-	if(value.hasOwnProperty('default')){
+	return jsonSchemaAvro._setTypeAndDefault(prop, value, isRequired)
+}
+
+jsonSchemaAvro._setTypeAndDefault = (prop = {}, contents = {}, isRequired = false) => {
+	const type = prop.type
+
+	if(contents.hasOwnProperty('default')){
 		//console.log('has a default')
-		prop.default = value.default
+		prop.default = contents.default
 	}
 	else if(!isRequired){
 		//console.log('not required and has no default')
 		prop.default = null
-		types.push('null')
 	}
-	if(Array.isArray(value.type)){
-		types = types.concat(value.type.filter(type => type !== 'null').map(type => typeMapping[type]))
+
+	if(Array.isArray(type)){
+		if(prop.default !== null && !isRequired){
+			prop.type = type.map(type => typeMapping[type]).filter(type => typeof type === 'string')
+		}
+		else{
+			const notNullTypes = type.map(type => typeMapping[type]).filter(type => typeof type === 'string' && type !== 'null')
+			if(prop.default === null){
+				prop.type = ['null'].concat(notNullTypes)
+			}
+			else if(notNullTypes.length === 0){
+				prop.type = 'null'
+			}
+			else{
+				prop.type = notNullTypes.length === 1 ? notNullTypes[0] : notNullTypes
+			}
+		}
 	}
 	else{
-		types.push(typeMapping[value.type])
+		const mappedType = typeof type === 'string' ? typeMapping[type] : type
+		if(mappedType === undefined){
+			prop.type = 'null'
+		}
+		else{
+			prop.type = prop.default === null ? ['null', type] : type
+		}
 	}
-	//console.log('types', types)
-	//console.log('size', types.length)
-	prop.type = types.length > 1 ? types : types.shift()
-	//console.log('prop', prop)
+
 	return prop
 }
